@@ -1,0 +1,14 @@
+[project]
+name = "osiris-pandas"
+version = "0.1.0"
+description = "Typed pandas bindings for Osiris, with localized names and declared call contracts."
+requires-python = ">=3.11"
+dependencies = ["pandas>=2.0", "numpy>=1.26"]
+
+[build-system]
+build-backend = "osiris_build"
+requires = ["osiris-lang>=0.3,<0.4"]
+
+# 用本地检出的编译器构建，便于在发布前验证。改回已发布 wheel 时删掉本表。
+[tool.uv.sources]
+osiris-lang = { path = "../osiris" }

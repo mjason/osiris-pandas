@@ -1,0 +1,967 @@
+(module osiris_pandas.core)
+
+^{:doc
+  {:default "Declare a pure, row-aligned pandas binding evaluated at bar close."
+   "zh-CN" "声明一个纯的、按行对齐、在收盘时点求值的 pandas 绑定。"}}
+(defmacro 逐行纯函数 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past 0
+                 :future 0
+                 :availability :bar-close}
+      :data {:alignment :labelled
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a pure, row-aligned pandas binding available immediately."
+   "zh-CN" "声明一个纯的、按行对齐、可立即求值的 pandas 绑定。"}}
+(defmacro 即时纯函数 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past 0
+                 :future 0
+                 :availability :immediate}
+      :data {:alignment :labelled
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "A causal interval ending at the current row."
+   "zh-CN" "截至当前行的因果回看区间。"}
+  :export true}
+(defstruct LookbackWindow [value Any])
+
+~osiris<lookback-example>
+(lookback close :window 20 :min-samples 1)
+
+;; The interval is [t-19, t].
+</lookback-example>
+
+~osiris<returns-example>
+(returns adjusted-close :periods 20)
+
+;; Return over 20 periods.
+</returns-example>
+
+~python<pandas-backend>
+"""Causal Pandas execution primitives used by the Osiris DSL macros."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+
+@dataclass(frozen=True)
+class LookbackWindow:
+    values: Any
+    window: int
+    min_samples: int | None
+    largest_count: int | None = None
+
+
+@dataclass(frozen=True)
+class SeriesPair:
+    left: pd.Series
+    right: pd.Series
+
+
+def lookback(
+    values: pd.Series, window: int, min_samples: int | None = None
+) -> LookbackWindow:
+    """Describe the causal interval [t-window+1, t]."""
+    window = _positive_int(window, "window")
+    if min_samples is not None:
+        min_samples = _positive_int(min_samples, "min_samples")
+        if min_samples > window:
+            raise ValueError("min_samples cannot exceed window")
+    return LookbackWindow(values, window, min_samples)
+
+
+def _rolling(window: LookbackWindow) -> Any:
+    if window.largest_count is not None:
+        raise TypeError("selected lookback windows must be consumed by window_mean")
+    if not isinstance(window.values, pd.Series):
+        raise TypeError("this reducer requires a single-series lookback window")
+    min_samples = window.window if window.min_samples is None else window.min_samples
+    return window.values.rolling(
+        window=window.window, min_periods=min_samples, center=False
+    )
+
+
+def window_sum(window: LookbackWindow) -> pd.Series:
+    return _rolling(window).sum()
+
+
+def window_mean(window: LookbackWindow) -> pd.Series:
+    if window.largest_count is not None:
+        count = window.largest_count
+        min_samples = (
+            window.window if window.min_samples is None else window.min_samples
+        )
+        return window.values.rolling(
+            window.window, min_periods=min_samples, center=False
+        ).apply(lambda sample: float(np.mean(np.sort(sample)[-count:])), raw=True)
+    return _rolling(window).mean()
+
+
+def window_min(window: LookbackWindow) -> pd.Series:
+    return _rolling(window).min()
+
+
+def window_max(window: LookbackWindow) -> pd.Series:
+    return _rolling(window).max()
+
+
+def window_std(window: LookbackWindow, ddof: int = 1) -> pd.Series:
+    return _rolling(window).std(ddof=ddof)
+
+
+def window_mad(window: LookbackWindow, strict: bool = True) -> pd.Series:
+    min_samples = window.window if window.min_samples is None else window.min_samples
+    return rolling_mad(window.values, window.window, strict, min_samples)
+
+
+def window_largest(window: LookbackWindow, count: int) -> LookbackWindow:
+    count = _positive_int(count, "count")
+    if count > window.window:
+        raise ValueError("count cannot exceed window")
+    return LookbackWindow(
+        window.values,
+        window.window,
+        window.min_samples,
+        largest_count=count,
+    )
+
+
+def pair(left: pd.Series, right: pd.Series) -> SeriesPair:
+    if not left.index.equals(right.index):
+        raise ValueError("paired series must have identical labelled indexes")
+    return SeriesPair(left, right)
+
+
+def window_correlation(window: LookbackWindow) -> pd.Series:
+    if not isinstance(window.values, SeriesPair):
+        raise TypeError("correlation requires a paired-series lookback window")
+    if window.largest_count is not None:
+        raise TypeError("correlation does not accept a selected lookback window")
+    min_samples = window.window if window.min_samples is None else window.min_samples
+    return window.values.left.rolling(
+        window.window, min_periods=min_samples, center=False
+    ).corr(window.values.right)
+
+
+def validate_panel_contract(
+    frame: pd.DataFrame,
+    entity_column: str = "symbol",
+    time_column: str = "candle_begin_time",
+) -> None:
+    """Fail closed unless panel rows are contiguous by entity and ordered by time."""
+    missing = [
+        column for column in (entity_column, time_column) if column not in frame.columns
+    ]
+    if missing:
+        raise ValueError(f"panel contract columns are missing: {missing!r}")
+
+    entities = frame[entity_column]
+    seen: set[Any] = set()
+    previous: Any = object()
+    for entity in entities:
+        if entity != previous:
+            if entity in seen:
+                raise ValueError(
+                    "panel rows must be contiguous by entity before time-series execution"
+                )
+            seen.add(entity)
+            previous = entity
+
+    for entity, partition in frame.groupby(entity_column, sort=False, dropna=False):
+        if not partition[time_column].is_monotonic_increasing:
+            raise ValueError(
+                f"panel partition {entity!r} must be ordered by {time_column!r}"
+            )
+
+
+def _positive_int(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
+def select(condition: pd.Series, true_value: Any, false_value: Any) -> pd.Series:
+    """Select row by row while preserving the condition's index."""
+    result = pd.Series(true_value, index=condition.index)
+    return result.where(condition, false_value)
+
+
+def where(condition: pd.Series, true_value: Any, false_value: Any) -> pd.Series:
+    """Canonical runtime spelling for row-wise selection."""
+    return select(condition, true_value, false_value)
+
+
+def greater_equal(left: Any, right: Any) -> Any:
+    """Compare aligned Series or scalar values without changing time position."""
+    return left >= right
+
+
+def greater_than(left: Any, right: Any) -> Any:
+    """Compare aligned Series or scalar values without changing time position."""
+    return left > right
+
+
+def less_equal(left: Any, right: Any) -> Any:
+    return left <= right
+
+
+def less_than(left: Any, right: Any) -> Any:
+    return left < right
+
+
+def equal(left: Any, right: Any) -> Any:
+    return left == right
+
+
+def logical_or(left: Any, right: Any) -> Any:
+    return left | right
+
+
+def logical_and(left: Any, right: Any) -> Any:
+    return left & right
+
+
+def logical_not(value: Any) -> Any:
+    return ~value
+
+
+def not_equal(left: Any, right: Any) -> Any:
+    return left != right
+
+
+def elementwise_max(left: Any, right: Any) -> Any:
+    if isinstance(left, pd.Series):
+        return pd.concat([left, pd.Series(right, index=left.index)], axis=1).max(axis=1)
+    if isinstance(right, pd.Series):
+        return pd.concat([pd.Series(left, index=right.index), right], axis=1).max(
+            axis=1
+        )
+    return max(left, right)
+
+
+def absolute(values: Any) -> Any:
+    """Return element-wise absolute values."""
+    return values.abs() if hasattr(values, "abs") else abs(values)
+
+
+def add(left: Any, right: Any) -> Any:
+    """Add aligned Series or scalar values."""
+    return left + right
+
+
+def subtract(left: Any, right: Any) -> Any:
+    """Subtract aligned Series or scalar values."""
+    return left - right
+
+
+def multiply(left: Any, right: Any) -> Any:
+    """Multiply aligned Series or scalar values."""
+    return left * right
+
+
+def integer_multiply(left: int, right: int) -> int:
+    """Multiply integer factor parameters."""
+    if isinstance(left, bool) or not isinstance(left, int):
+        raise ValueError(f"left must be an integer, got {left!r}")
+    if isinstance(right, bool) or not isinstance(right, int):
+        raise ValueError(f"right must be an integer, got {right!r}")
+    return left * right
+
+
+def divide(left: Any, right: Any) -> Any:
+    """Divide aligned Series or scalar values."""
+    return left / right
+
+
+def choose(key: Any, choices: Any) -> Any:
+    for candidate, value in choices:
+        if key == candidate:
+            return value
+    supported = [candidate for candidate, _ in choices]
+    raise ValueError(f"unsupported option {key!r}; expected one of {supported!r}")
+
+
+def fallback(value: Any, default: Any) -> Any:
+    return default if value is None or value == "" else value
+
+
+def fallback_int(value: Any, default: int) -> int:
+    return int(default if value is None or value == "" else value)
+
+
+def normalize_lookback_period(value: Any, default: int = 1) -> int:
+    if isinstance(value, (tuple, list)):
+        value = value[0] if value else None
+    normalized = int(default if value is None or value == "" else value)
+    return 1 if normalized <= 1 else normalized
+
+
+def fill_missing(values: Any, replacement: Any = 0) -> Any:
+    return values.fillna(replacement) if hasattr(values, "fillna") else values
+
+
+def forward_fill(values: Any) -> Any:
+    return values.ffill()
+
+
+def is_missing(values: Any) -> Any:
+    return values.isna()
+
+
+def log1p(values: Any) -> Any:
+    return np.log1p(values)
+
+
+def as_integer(values: Any) -> Any:
+    return values.astype(int) if hasattr(values, "astype") else int(values)
+
+
+def horizontal_sum(*values: Any) -> pd.Series:
+    series = next((value for value in values if isinstance(value, pd.Series)), None)
+    if series is None:
+        return sum(values)
+    columns = [
+        value if isinstance(value, pd.Series) else pd.Series(value, index=series.index)
+        for value in values
+    ]
+    return pd.concat(columns, axis=1).sum(axis=1, skipna=True)
+
+
+def in_values(values: pd.Series, candidates: Any) -> pd.Series:
+    return values.isin(list(candidates))
+
+
+def contains_any(values: pd.Series, needles: Any) -> pd.Series:
+    text = values.astype(str)
+    result = pd.Series(False, index=values.index)
+    for needle in needles:
+        result |= text.str.contains(str(needle), regex=False, na=False)
+    return result
+
+
+def ewm_mean(values: pd.Series, span: int) -> pd.Series:
+    return values.ewm(span=_positive_int(span, "span"), adjust=False).mean()
+
+
+def horizontal_less_fraction(reference: pd.Series, *values: Any) -> pd.Series:
+    hits = [(value < reference).astype(int) for value in values]
+    return pd.concat(hits, axis=1).sum(axis=1) / len(hits)
+
+
+def positive_relative_gap_sum(reference: pd.Series, *values: Any) -> pd.Series:
+    gaps = [
+        ((value - reference) / reference).where(value > reference, 0)
+        for value in values
+    ]
+    return pd.concat(gaps, axis=1).sum(axis=1)
+
+
+def rolling_sum(
+    values: pd.Series, window: int, min_periods: int | None = None
+) -> pd.Series:
+    """Sum over [t-window+1, t]; centered/forward windows are not exposed."""
+    window = _positive_int(window, "window")
+    if min_periods is None:
+        min_periods = window
+    min_periods = _positive_int(min_periods, "min_periods")
+    if min_periods > window:
+        raise ValueError("min_periods cannot exceed window")
+    return values.rolling(window=window, min_periods=min_periods, center=False).sum()
+
+
+def rolling_mean(
+    values: pd.Series, window: int, min_periods: int | None = None
+) -> pd.Series:
+    """Mean over [t-window+1, t]."""
+    window = _positive_int(window, "window")
+    if min_periods is None:
+        min_periods = window
+    min_periods = _positive_int(min_periods, "min_periods")
+    if min_periods > window:
+        raise ValueError("min_periods cannot exceed window")
+    return values.rolling(window=window, min_periods=min_periods, center=False).mean()
+
+
+def rolling_min(
+    values: pd.Series, window: int, min_periods: int | None = None
+) -> pd.Series:
+    """Minimum over [t-window+1, t]."""
+    window = _positive_int(window, "window")
+    if min_periods is None:
+        min_periods = window
+    min_periods = _positive_int(min_periods, "min_periods")
+    if min_periods > window:
+        raise ValueError("min_periods cannot exceed window")
+    return values.rolling(window=window, min_periods=min_periods, center=False).min()
+
+
+def rolling_max(
+    values: pd.Series, window: int, min_periods: int | None = None
+) -> pd.Series:
+    """Maximum over [t-window+1, t]."""
+    window = _positive_int(window, "window")
+    if min_periods is None:
+        min_periods = window
+    min_periods = _positive_int(min_periods, "min_periods")
+    if min_periods > window:
+        raise ValueError("min_periods cannot exceed window")
+    return values.rolling(window=window, min_periods=min_periods, center=False).max()
+
+
+def rolling_std(
+    values: pd.Series,
+    window: int,
+    min_periods: int | None = None,
+    ddof: int = 1,
+) -> pd.Series:
+    """Standard deviation over [t-window+1, t]."""
+    window = _positive_int(window, "window")
+    if min_periods is None:
+        min_periods = window
+    min_periods = _positive_int(min_periods, "min_periods")
+    if min_periods > window:
+        raise ValueError("min_periods cannot exceed window")
+    return values.rolling(window=window, min_periods=min_periods, center=False).std(
+        ddof=ddof
+    )
+
+
+def rolling_mad(
+    values: pd.Series,
+    window: int,
+    strict: bool = True,
+    min_periods: int | None = None,
+) -> pd.Series:
+    """Mean absolute deviation using the strict or legacy xbx center."""
+    window = _positive_int(window, "window")
+    if not isinstance(strict, bool):
+        raise ValueError(f"strict must be a boolean, got {strict!r}")
+    if min_periods is None:
+        min_periods = window
+    min_periods = _positive_int(min_periods, "min_periods")
+    if min_periods > window:
+        raise ValueError("min_periods cannot exceed window")
+
+    def mean_absolute_deviation(sample: pd.Series) -> float:
+        # ``strict=False`` preserves the historical xbx ``np.mean`` center;
+        # the default uses Pandas' compensated rolling mean semantics.
+        center = (
+            sample.mean() if strict else float(np.mean(sample.to_numpy(dtype=float)))
+        )
+        return float((sample - center).abs().mean())
+
+    return values.rolling(window=window, min_periods=min_periods, center=False).apply(
+        mean_absolute_deviation, raw=False
+    )
+
+
+def returns(values: pd.Series, periods: int = 1) -> pd.Series:
+    """Simple return relative to a current or past row."""
+    previous = lag(values, periods)
+    return values / previous - 1
+
+
+def lag(values: pd.Series, periods: int = 1) -> pd.Series:
+    """Read a current or past value. Negative (future) periods are forbidden."""
+    if isinstance(periods, bool) or not isinstance(periods, int) or periods < 0:
+        raise ValueError(f"periods must be a non-negative integer, got {periods!r}")
+    return values.shift(periods)
+
+
+def difference(values: pd.Series, periods: int = 1) -> pd.Series:
+    """Difference against a current or past row."""
+    return values - lag(values, periods)
+</pandas-backend>
+
+(extern python pandas-backend
+  ^{:doc
+    {:default "Build a causal lookback interval ending at the current row."
+     "zh-CN" "构造截至当前行且仅包含历史与当前数据的回看窗口。"}
+    :examples [lookback-example]
+    :osiris/names {"zh-CN" {:preferred 回看窗口}}
+    :export true}
+  (defn ^LookbackWindow lookback
+    [^Any values ^{:type Int :osiris/names {"zh-CN" {:preferred 周期}}} window
+     [^{:type Any :osiris/names {"zh-CN" {:preferred 最小样本}}} min-samples =
+      none]]
+    :contract
+    {:id "osiris-pandas/lookback-v1"
+     :effects :pure
+     :temporal {:past "window-1"
+                :future 0
+                :availability :bar-close}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :ordered-by [:time]
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Sum the values in a lookback window."
+     "zh-CN" "对回看窗口求和。"}
+    :osiris/names {"zh-CN" {:preferred 求和}}
+    :export true}
+  (逐行纯函数 window-sum [^LookbackWindow window])
+  ^{:doc
+    {:default "Return the mean of a lookback window."
+     "zh-CN" "计算回看窗口均值。"}
+    :osiris/names {"zh-CN" {:preferred 均值}}
+    :export true}
+  (逐行纯函数 window-mean [^LookbackWindow window])
+  ^{:doc
+    {:default "Return the minimum of a lookback window."
+     "zh-CN" "计算回看窗口最小值。"}
+    :osiris/names {"zh-CN" {:preferred 最小值}}
+    :export true}
+  (逐行纯函数 window-min [^LookbackWindow window])
+  ^{:doc
+    {:default "Return the maximum of a lookback window."
+     "zh-CN" "计算回看窗口最大值。"}
+    :osiris/names {"zh-CN" {:preferred 最大值}}
+    :export true}
+  (逐行纯函数 window-max [^LookbackWindow window])
+  ^{:doc
+    {:default "Return the standard deviation of a lookback window."
+     "zh-CN" "计算回看窗口标准差。"}
+    :osiris/names {"zh-CN" {:preferred 标准差}}
+    :export true}
+  (逐行纯函数 window-std
+              [^LookbackWindow window
+               [^{:type Int :osiris/names {"zh-CN" {:preferred 自由度修正}}} ddof
+                = 1]])
+  ^{:doc
+    {:default "Return mean absolute deviation of a lookback window."
+     "zh-CN" "计算回看窗口平均绝对偏差。"}
+    :osiris/names {"zh-CN" {:preferred 平均绝对偏差}}
+    :export true}
+  (逐行纯函数 window-mad
+              [^LookbackWindow window
+               [^{:type Bool :osiris/names {"zh-CN" {:preferred 严格}}} strict =
+                true]])
+  ^{:doc
+    {:default "Keep the largest observations in each lookback window."
+     "zh-CN" "在每个回看窗口内保留最大的若干观测。"}
+    :osiris/names {"zh-CN" {:preferred 最大若干}}
+    :export true}
+  (defn ^LookbackWindow window-largest
+    [^LookbackWindow window
+     ^{:type Int :osiris/names {"zh-CN" {:preferred 数量}}} count]
+    :contract
+    {:id "osiris-pandas/window-largest-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :immediate}
+     :data {:alignment :labelled
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Pair two aligned series for a bivariate window reducer."
+     "zh-CN" "将两个已对齐序列组成双变量窗口输入。"}
+    :osiris/names {"zh-CN" {:preferred 配对}}
+    :export true}
+  (即时纯函数 pair [^Any left ^Any right])
+  ^{:doc
+    {:default "Return correlation from a paired lookback window."
+     "zh-CN" "计算成对回看窗口的相关系数。"}
+    :osiris/names {"zh-CN" {:preferred 相关系数}}
+    :export true}
+  (即时纯函数 window-correlation [^LookbackWindow window])
+  ^{:doc
+    {:default "Select between two values row by row."
+     "zh-CN" "按行在两个值之间选择。"}
+    :osiris/names {"zh-CN" {:preferred 如果 :aliases [当]}}
+    :export true}
+  (defn ^Any where [^Any condition ^Any true-value ^Any false-value]
+    :contract
+    {:id "osiris-pandas/where-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :bar-close}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Compare aligned values with greater-than-or-equal."
+     "zh-CN" "逐行判断左值是否大于等于右值。"}
+    :osiris/names {"zh-CN" {:preferred 大于等于}}
+    :export true}
+  (defn ^Any greater-equal [^Any left ^Any right]
+    :contract
+    {:id "osiris-pandas/greater-equal-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :bar-close}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Compare aligned values with greater-than."
+     "zh-CN" "逐行判断左值是否大于右值。"}
+    :osiris/names {"zh-CN" {:preferred 大于}}
+    :export true}
+  (逐行纯函数 greater-than [^Any left ^Any right])
+  ^{:doc
+    {:default "Compare aligned values with less-than-or-equal."
+     "zh-CN" "逐行判断左值是否小于等于右值。"}
+    :osiris/names {"zh-CN" {:preferred 小于等于}}
+    :export true}
+  (逐行纯函数 less-equal [^Any left ^Any right])
+  ^{:doc
+    {:default "Compare aligned values with less-than."
+     "zh-CN" "逐行判断左值是否小于右值。"}
+    :osiris/names {"zh-CN" {:preferred 小于}}
+    :export true}
+  (逐行纯函数 less-than [^Any left ^Any right])
+  ^{:doc
+    {:default "Compare aligned values for equality."
+     "zh-CN" "逐项判断是否相等。"}
+    :osiris/names {"zh-CN" {:preferred 等于}}
+    :export true}
+  (逐行纯函数 equal [^Any left ^Any right])
+  ^{:doc
+    {:default "Return element-wise logical OR."
+     "zh-CN" "逐项判断任一条件成立。"}
+    :osiris/names {"zh-CN" {:preferred 任一}}
+    :export true}
+  (逐行纯函数 logical-or [^Any left ^Any right])
+  ^{:doc
+    {:default "Return the aligned element-wise maximum."
+     "zh-CN" "返回对齐表达式的逐项最大值。"}
+    :osiris/names {"zh-CN" {:preferred 逐项最大值}}
+    :export true}
+  (逐行纯函数 elementwise-max [^Any left ^Any right])
+  ^{:doc
+    {:default "Return element-wise absolute values."
+     "zh-CN" "返回逐项绝对值。"}
+    :osiris/names {"zh-CN" {:preferred 绝对值}}
+    :export true}
+  (逐行纯函数 absolute [^Any values])
+  ^{:doc
+    {:default "Add aligned values." "zh-CN" "逐行相加。"}
+    :osiris/names {"zh-CN" {:preferred 加}}
+    :export true}
+  (逐行纯函数 add [^Any left ^Any right])
+  ^{:doc
+    {:default "Subtract aligned values." "zh-CN" "逐行相减。"}
+    :osiris/names {"zh-CN" {:preferred 减}}
+    :export true}
+  (逐行纯函数 subtract [^Any left ^Any right])
+  ^{:doc
+    {:default "Multiply aligned values." "zh-CN" "逐行相乘。"}
+    :osiris/names {"zh-CN" {:preferred 乘}}
+    :export true}
+  (逐行纯函数 multiply [^Any left ^Any right])
+  ^{:doc
+    {:default "Multiply integer factor parameters."
+     "zh-CN" "计算整数因子参数的乘积。"}
+    :osiris/names {"zh-CN" {:preferred 整数乘}}
+    :export true}
+  (defn ^Int integer-multiply [^Int left ^Int right]
+    :contract
+    {:id "osiris-pandas/integer-multiply-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :immediate}
+     :data {:preserves-length true :reshapes false}})
+  ^{:doc
+    {:default "Divide aligned values." "zh-CN" "逐行相除。"}
+    :osiris/names {"zh-CN" {:preferred 除}}
+    :export true}
+  (逐行纯函数 divide [^Any left ^Any right])
+  ^{:doc
+    {:default "Return the simple return from a past row to the current row."
+     "zh-CN" "计算过去某期到当前行的简单涨跌幅。"}
+    :examples [returns-example]
+    :osiris/names {"zh-CN" {:preferred 收益率 :aliases [时序涨跌幅]}}
+    :export true}
+  (defn ^Any returns
+    [^Any values
+     [^{:type Int :osiris/names {"zh-CN" {:preferred 周期}}} periods = 1]]
+    :contract
+    {:id "osiris-pandas/returns-v1"
+     :effects :pure
+     :temporal {:past "periods"
+                :future 0
+                :availability :bar-close}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :ordered-by [:time]
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Read a current or past row; reject future periods."
+     "zh-CN" "读取当前或历史行；拒绝未来期数。"}
+    :osiris/names {"zh-CN" {:preferred 滞后 :aliases [时序延迟]}}
+    :export true}
+  (defn ^Any lag
+    [^Any values
+     [^{:type Int :osiris/names {"zh-CN" {:preferred 周期}}} periods = 1]]
+    :contract
+    {:id "osiris-pandas/lag-v1"
+     :effects :pure
+     :temporal {:past "periods"
+                :future 0
+                :availability :bar-close}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :ordered-by [:time]
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Return the difference from a past row."
+     "zh-CN" "返回当前值与历史值之差。"}
+    :osiris/names {"zh-CN" {:preferred 差分 :aliases [时序差分]}}
+    :export true}
+  (defn ^Any difference
+    [^Any values
+     [^{:type Int :osiris/names {"zh-CN" {:preferred 周期}}} periods = 1]]
+    :contract
+    {:id "osiris-pandas/difference-v1"
+     :effects :pure
+     :temporal {:past "periods"
+                :future 0
+                :availability :bar-close}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :ordered-by [:time]
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Compare aligned values for inequality."
+     "zh-CN" "逐项判断值不相等。"}
+    :osiris/names {"zh-CN" {:preferred 不等于}}
+    :export true}
+  (即时纯函数 not-equal [^Any left ^Any right])
+  ^{:doc
+    {:default "Return element-wise logical AND."
+     "zh-CN" "逐项判断全部条件成立。"}
+    :osiris/names {"zh-CN" {:preferred 且}}
+    :export true}
+  (即时纯函数 logical-and [^Any left ^Any right])
+  ^{:doc
+    {:default "Negate aligned boolean values." "zh-CN" "逐项逻辑取反。"}
+    :osiris/names {"zh-CN" {:preferred 非}}
+    :export true}
+  (即时纯函数 logical-not [^Any value])
+  ^{:doc
+    {:default "Select one value from a closed option table."
+     "zh-CN" "从封闭选项表选择一个值。"}
+    :osiris/names {"zh-CN" {:preferred 选择}}
+    :export true}
+  (即时纯函数 choose [^Any key ^Any choices])
+  ^{:doc
+    {:default "Use a fallback for an empty option."
+     "zh-CN" "参数为空时使用缺省值。"}
+    :osiris/names {"zh-CN" {:preferred 缺省值}}
+    :export true}
+  (defn ^Any fallback [^Any value ^Any default]
+    :contract
+    {:id "osiris-pandas/fallback-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :immediate}
+     :data {:preserves-length true :reshapes false}})
+  ^{:doc
+    {:default "Use and normalize an integer fallback."
+     "zh-CN" "参数为空时使用并规范化整数缺省值。"}
+    :osiris/names {"zh-CN" {:preferred 缺省整数}}
+    :export true}
+  (defn ^Int fallback-int [^Any value ^Int default]
+    :contract
+    {:id "osiris-pandas/fallback-int-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :immediate}
+     :data {:preserves-length true :reshapes false}})
+  ^{:doc
+    {:default "Normalize a legacy optional parameter into a positive lookback period."
+     "zh-CN" "将旧式可选参数规范为正回看周期。"}
+    :osiris/names {"zh-CN" {:preferred 规范回看周期}}
+    :export true}
+  (defn ^Int normalize-lookback-period
+    [^Any value
+     [^{:type Int :osiris/names {"zh-CN" {:preferred 缺省周期}}} default = 1]]
+    :contract
+    {:id "osiris-pandas/normalize-lookback-period-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :immediate}
+     :data {:preserves-length true :reshapes false}})
+  ^{:doc
+    {:default "Replace missing aligned values."
+     "zh-CN" "替换逐项缺失值。"}
+    :osiris/names {"zh-CN" {:preferred 缺失值替换}}
+    :export true}
+  (即时纯函数 fill-missing [^Any values [^Any replacement = 0]])
+  ^{:doc
+    {:default "Forward-fill from past observations."
+     "zh-CN" "仅使用历史观测前向填充。"}
+    :osiris/names {"zh-CN" {:preferred 前向填充}}
+    :export true}
+  (defn ^Any forward-fill [^Any values]
+    :contract
+    {:id "osiris-pandas/forward-fill-v1"
+     :effects :pure
+     :temporal {:past :unbounded
+                :future 0
+                :availability :immediate}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :ordered-by [:time]
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Test aligned values for missingness."
+     "zh-CN" "逐项判断是否缺失。"}
+    :osiris/names {"zh-CN" {:preferred 是否缺失}}
+    :export true}
+  (即时纯函数 is-missing [^Any values])
+  ^{:doc
+    {:default "Return element-wise log(1+x)."
+     "zh-CN" "逐项计算 log(1+x)。"}
+    :osiris/names {"zh-CN" {:preferred 对数1p}}
+    :export true}
+  (即时纯函数 log1p [^Any values])
+  ^{:doc
+    {:default "Cast aligned values to integers."
+     "zh-CN" "将逐项值转换为整数。"}
+    :osiris/names {"zh-CN" {:preferred 转整数}}
+    :export true}
+  (即时纯函数 as-integer [^Any values])
+  ^{:doc
+    {:default "Sum aligned values across columns."
+     "zh-CN" "跨列逐行求和并跳过缺失值。"}
+    :osiris/names {"zh-CN" {:preferred 横向求和}}
+    :export true}
+  (即时纯函数 horizontal-sum [& ^Any values])
+  ^{:doc
+    {:default "Test membership in a closed value collection."
+     "zh-CN" "判断值是否属于封闭集合。"}
+    :osiris/names {"zh-CN" {:preferred 属于}}
+    :export true}
+  (即时纯函数 in-values [^Any values ^Any candidates])
+  ^{:doc
+    {:default "Test whether text contains any closed keyword."
+     "zh-CN" "判断文本是否包含任一封闭关键词。"}
+    :osiris/names {"zh-CN" {:preferred 任含文本}}
+    :export true}
+  (即时纯函数 contains-any [^Any values ^Any needles])
+  ^{:doc
+    {:default "Return a causal exponentially weighted mean."
+     "zh-CN" "计算因果指数移动均值。"}
+    :osiris/names {"zh-CN" {:preferred 指数移动均值}}
+    :export true}
+  (defn ^Any ewm-mean
+    [^Any values ^{:type Int :osiris/names {"zh-CN" {:preferred 周期}}} span]
+    :contract
+    {:id "osiris-pandas/ewm-mean-v1"
+     :effects :pure
+     :temporal {:past :unbounded
+                :future 0
+                :availability :immediate}
+     :data {:axes [:entity :time]
+            :alignment :labelled
+            :ordered-by [:time]
+            :preserves-length true
+            :reshapes false}})
+  ^{:doc
+    {:default "Fraction of aligned values below a reference."
+     "zh-CN" "计算跨列小于参考值的比例。"}
+    :osiris/names {"zh-CN" {:preferred 横向小于比例}}
+    :export true}
+  (即时纯函数 horizontal-less-fraction [^Any reference & ^Any values])
+  ^{:doc
+    {:default "Sum positive relative gaps above a reference."
+     "zh-CN" "求高于参考值的正相对差之和。"}
+    :osiris/names {"zh-CN" {:preferred 正相对差求和}}
+    :export true}
+  (defn ^Any positive-relative-gap-sum [^Any reference & ^Any values]
+    :contract
+    {:id "osiris-pandas/positive-relative-gap-sum-v1"
+     :effects :pure
+     :temporal {:past 0
+                :future 0
+                :availability :immediate}
+     :data {:alignment :labelled
+            :preserves-length true
+            :reshapes false}}))
+
+^{:doc
+  {:default "Expand the positive directional indicator and its displaced smoothing."
+   "zh-CN" "展开正向趋向指标及其滞后平滑计算。"}
+  :osiris/names {"zh-CN" {:preferred 正向趋向平滑}}
+  :export true}
+(defn ^Any adxr-positive [^Any high ^Any low ^Any close ^Int window]
+  :contract
+  {:id "osiris-pandas/adxr-positive-v1"
+   :effects :pure
+   :temporal {:past "2*window+1"
+              :future 0
+              :availability :bar-close}
+   :data {:axes [:entity :time]
+          :alignment :labelled
+          :ordered-by [:time]
+          :preserves-length true
+          :reshapes false}}
+  (let [previous-high (lag high 1)
+        previous-low (lag low 1)
+        high-vector
+        (where (greater-than high previous-high)
+               (subtract high previous-high)
+               0)
+        low-vector
+        (where (greater-than previous-low low) (subtract previous-low low) 0)
+        positive-move
+        (where (greater-than high-vector low-vector)
+               (subtract high-vector (lag high-vector 1))
+               0)
+        true-range
+        (elementwise-max (elementwise-max (absolute (subtract high low))
+                                          (absolute (subtract high close)))
+                         (absolute (subtract low close)))
+        positive-sum (window-sum (lookback positive-move window 1))
+        range-sum
+        (window-sum (lookback true-range window 1))
+        positive-index
+        (divide positive-sum range-sum)]
+    (add (multiply positive-index 0.5)
+         (multiply (lag positive-index window) 0.5))))
+
+^{:doc
+  {:default "Detect a limit-up in the trailing full N-row window."
+   "zh-CN" "检测完整 N 日窗口内是否有收盘涨停。"}
+  :export true}
+(defmacro n-day-limit-up [close limit-price n]
+  `(where (greater-equal (window-sum (lookback
+                                      (where (greater-equal ~close ~limit-price)
+                                             1
+                                             0)
+                                      ~n
+                                      ~n))
+                         1)
+          1
+          0))

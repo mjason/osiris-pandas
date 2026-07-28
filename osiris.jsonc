@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/mjason/osiris/main/schemas/osiris.schema.json",
+
+  // Osiris 模块根目录；目录层级映射为模块名中的点。
+  "source": ["src"],
+  "outDir": "dist",
+
+  // 单次编译只对应一个 Python target。
+  "targetPython": "3.11",
+  "strict": true,
+
+  // LSP 展示语言使用标准 BCP 47 tag，例如 zh-CN、ja 或 en。
+  "displayLocale": "zh-CN"
+}
