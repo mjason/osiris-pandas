@@ -1,7 +1,9 @@
 # osiris-pandas
 
-Typed pandas bindings for Osiris: localized names, declared call contracts, and
-a package-owned Python backend that ships inside the wheel.
+Make pandas pleasant to use from Osiris. Nothing here knows about any domain:
+no trading sessions, no factors, no lookback abstractions — just typed, checked
+spellings of pandas operations, with localized names and a Python backend that
+ships inside the wheel.
 
 ## Use
 
@@ -12,15 +14,36 @@ dependencies = ["osiris-pandas"]
 
 ```clojure
 (module app.main)
-(import osiris_pandas.core :refer [回看窗口 均值])
+(import osiris_pandas.core :refer [窗口均值 横向求和 按条件取值 大于])
 
-^{:doc "Rolling mean over a lookback window." :export true}
-(defn ^Any 均线 [^Any 收盘价 ^Int 周期]
-  (均值 (回看窗口 收盘价 :周期 周期)))
+^{:doc "Rolling mean of a series." :export true}
+(defn ^Any 均线 [^Any 序列 ^Int 周期] (窗口均值 序列 周期))
 ```
 
 Every binding declares a call contract — effects, temporal reach, and data
 alignment — so the compiler can check causality rather than trust the call.
+The temporal claims are about data dependency only: a rolling reducer reads
+`[t-window+1, t]`, a shift reads `periods` rows back, everything else reads the
+current row. `:availability` is always `:immediate`; when a value becomes
+available is a question about your domain, not about pandas.
+
+## Surface
+
+39 bindings, each with an English canonical name and a Chinese localized name:
+
+| Group | Bindings |
+| --- | --- |
+| Rolling | `rolling-sum` `rolling-mean` `rolling-min` `rolling-max` `rolling-median` `rolling-std` `rolling-correlation` |
+| Along the order | `shift` `diff` `pct-change` `ewm-mean` |
+| Missing data | `is-missing` `fill-missing` `forward-fill` |
+| Selection | `where` `in-values` `contains-any` |
+| Arithmetic | `add` `subtract` `multiply` `divide` `absolute` `log1p` `as-integer` `elementwise-max` `elementwise-min` |
+| Comparison | `greater-than` `greater-equal` `less-than` `less-equal` `equal` `not-equal` |
+| Logical | `logical-and` `logical-or` `logical-not` |
+| Across series | `row-sum` `row-mean` `row-max` `row-min` |
+
+Domain concepts belong in your own package: build a lookback type, a trading
+calendar, or a factor vocabulary on top of these.
 
 ## Build
 
