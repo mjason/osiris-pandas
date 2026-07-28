@@ -29,18 +29,26 @@ available is a question about your domain, not about pandas.
 
 ## Surface
 
-39 bindings, each with an English canonical name and a Chinese localized name:
+112 bindings, each with an English canonical name and a Chinese localized name.
+The groups below correspond to the nine contract shapes the module declares —
+the shape is what the compiler checks, so it is worth knowing which one you are
+reaching for.
 
-| Group | Bindings |
-| --- | --- |
-| Rolling | `rolling-sum` `rolling-mean` `rolling-min` `rolling-max` `rolling-median` `rolling-std` `rolling-correlation` |
-| Along the order | `shift` `diff` `pct-change` `ewm-mean` |
-| Missing data | `is-missing` `fill-missing` `forward-fill` |
-| Selection | `where` `in-values` `contains-any` |
-| Arithmetic | `add` `subtract` `multiply` `divide` `absolute` `log1p` `as-integer` `elementwise-max` `elementwise-min` |
-| Comparison | `greater-than` `greater-equal` `less-than` `less-equal` `equal` `not-equal` |
-| Logical | `logical-and` `logical-or` `logical-not` |
-| Across series | `row-sum` `row-mean` `row-max` `row-min` |
+| Shape | Reads | Bindings |
+| --- | --- | --- |
+| Row-wise | the current row | arithmetic, comparison, logic, text, calendar fields, `where`, `clip`, `round-to`, `between`, missing-data tests, row-wise aggregation across series |
+| Rolling | `[t-window+1, t]` | `rolling-sum` `rolling-mean` `rolling-min` `rolling-max` `rolling-median` `rolling-std` `rolling-correlation` |
+| Shifted | `periods` rows back | `shift` `diff` `pct-change` |
+| Cumulative | every earlier row | `cumulative-sum` `cumulative-product` `cumulative-max` `cumulative-min` `expanding-*` |
+| Forward-looking | later rows only | `back-fill` |
+| Whole column | every row, later ones included | `rank` `percent-rank` `interpolate` `duplicated` |
+| Reduction | every row, yields one value | `series-sum` `series-mean` `series-quantile` `series-count` … |
+| Grouped | other rows of the same key | `group-sum` `group-mean` `group-rank` `group-size` … |
+| Reshaping | builds or rearranges a frame | `to-frame` `column` `merge-frames` `pivot` `sort-by` `group-aggregate` … |
+
+The temporal claim is the point. `rank` and `back-fill` both read rows that come
+later, so both declare an unbounded future; a pipeline that must stay causal can
+be checked rather than reviewed by eye.
 
 Domain concepts belong in your own package: build a lookback type, a trading
 calendar, or a factor vocabulary on top of these.

@@ -51,6 +51,135 @@
              :preserves-length true
              :reshapes false}}))
 
+^{:doc
+  {:default "Declare a reduction that leaves the row axis and yields one value."
+   "zh-CN" "声明一个离开行轴、归约为单个值的绑定。"}}
+(defmacro 归约 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future :unbounded
+                 :availability :immediate}
+      :data {:preserves-length false
+             :reshapes true
+             :materializes true}}))
+
+^{:doc
+  {:default "Declare a binding that reads the whole column, later rows included."
+   "zh-CN" "声明一个读取整列（含后续行）的绑定。"}}
+(defmacro 整列 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future :unbounded
+                 :availability :immediate}
+      :data {:alignment :labelled
+             :materializes true
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a reduction over every earlier row and no later one."
+   "zh-CN" "声明一个归约所有在先行、且不读取后续行的绑定。"}}
+(defmacro 累计 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future 0
+                 :availability :immediate}
+      :data {:axes [:entity :time]
+             :alignment :labelled
+             :ordered-by [:time]
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a binding that reads later rows and no earlier one."
+   "zh-CN" "声明一个读取后续行、不读取在先行的绑定。"}}
+(defmacro 前视 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past 0
+                 :future :unbounded
+                 :availability :immediate}
+      :data {:axes [:entity :time]
+             :alignment :labelled
+             :ordered-by [:time]
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a binding that keeps the column but changes its row count."
+   "zh-CN" "声明一个保留列、但改变行数的绑定。"}}
+(defmacro 变长 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future :unbounded
+                 :availability :immediate}
+      :data {:materializes true
+             :preserves-length false
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a grouped transform: one value per row, from its group."
+   "zh-CN" "声明一个分组变换：每行一个值，取自该行所属的组。"}}
+(defmacro 分组 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future :unbounded
+                 :availability :immediate}
+      :data {:axes [:entity]
+             :alignment :labelled
+             :materializes true
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a grouped transform that reads only earlier rows of its group."
+   "zh-CN" "声明一个只读取同组在先行的分组变换。"}}
+(defmacro 分组累计 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future 0
+                 :availability :immediate}
+      :data {:axes [:entity :time]
+             :alignment :labelled
+             :ordered-by [:time]
+             :preserves-length true
+             :reshapes false}}))
+
+^{:doc
+  {:default "Declare a binding that builds or rearranges a frame."
+   "zh-CN" "声明一个构建或重排数据框的绑定。"}}
+(defmacro 重塑 [name params]
+  `(defn ^Any ~name ~params
+     :contract
+     {:id ~(str "osiris-pandas/" name "-v1")
+      :effects :pure
+      :temporal {:past :unbounded
+                 :future :unbounded
+                 :availability :immediate}
+      :data {:materializes true
+             :preserves-length false
+             :reshapes true}}))
+
 ~python<pandas-backend>
 """Pandas primitives with explicit, causal window semantics.
 
@@ -308,6 +437,402 @@ def row_max(*values: Any) -> pd.Series:
 
 def row_min(*values: Any) -> pd.Series:
     return _align(values).min(axis=1, skipna=True)
+
+
+# Whole-series reductions. These leave the row axis entirely, so their
+# declarations say `preserves-length false` and `reshapes true`.
+
+
+def series_sum(values: pd.Series) -> Any:
+    return values.sum()
+
+
+def series_mean(values: pd.Series) -> Any:
+    return values.mean()
+
+
+def series_min(values: pd.Series) -> Any:
+    return values.min()
+
+
+def series_max(values: pd.Series) -> Any:
+    return values.max()
+
+
+def series_median(values: pd.Series) -> Any:
+    return values.median()
+
+
+def series_std(values: pd.Series, ddof: int = 1) -> Any:
+    if isinstance(ddof, bool) or not isinstance(ddof, int) or ddof < 0:
+        raise ValueError(f"ddof must be a non-negative integer, got {ddof!r}")
+    return values.std(ddof=ddof)
+
+
+def series_count(values: pd.Series) -> int:
+    return int(values.count())
+
+
+def series_nunique(values: pd.Series) -> int:
+    return int(values.nunique())
+
+
+def series_quantile(values: pd.Series, q: float) -> Any:
+    if not isinstance(q, (int, float)) or isinstance(q, bool) or not 0.0 <= q <= 1.0:
+        raise ValueError(f"q must be between 0 and 1, got {q!r}")
+    return values.quantile(q)
+
+
+def series_any(values: pd.Series) -> bool:
+    return bool(values.any())
+
+
+def series_all(values: pd.Series) -> bool:
+    return bool(values.all())
+
+
+# Reading the whole column while keeping one value per row. `rank` looks at
+# later rows, which is why its declaration admits an unbounded future.
+
+
+def rank(
+    values: pd.Series, method: str = "average", ascending: bool = True
+) -> pd.Series:
+    if method not in ("average", "min", "max", "first", "dense"):
+        raise ValueError(f"unsupported rank method {method!r}")
+    if not isinstance(ascending, bool):
+        raise ValueError(f"ascending must be a boolean, got {ascending!r}")
+    return values.rank(method=method, ascending=ascending)
+
+
+def percent_rank(values: pd.Series, ascending: bool = True) -> pd.Series:
+    if not isinstance(ascending, bool):
+        raise ValueError(f"ascending must be a boolean, got {ascending!r}")
+    return values.rank(pct=True, ascending=ascending)
+
+
+# Cumulative and expanding reductions read every earlier row and no later one.
+
+
+def cumulative_sum(values: pd.Series) -> pd.Series:
+    return values.cumsum()
+
+
+def cumulative_product(values: pd.Series) -> pd.Series:
+    return values.cumprod()
+
+
+def cumulative_max(values: pd.Series) -> pd.Series:
+    return values.cummax()
+
+
+def cumulative_min(values: pd.Series) -> pd.Series:
+    return values.cummin()
+
+
+def _expanding(values: pd.Series, min_periods: int) -> Any:
+    return values.expanding(min_periods=_positive_int(min_periods, "min_periods"))
+
+
+def expanding_sum(values: pd.Series, min_periods: int = 1) -> pd.Series:
+    return _expanding(values, min_periods).sum()
+
+
+def expanding_mean(values: pd.Series, min_periods: int = 1) -> pd.Series:
+    return _expanding(values, min_periods).mean()
+
+
+def expanding_min(values: pd.Series, min_periods: int = 1) -> pd.Series:
+    return _expanding(values, min_periods).min()
+
+
+def expanding_max(values: pd.Series, min_periods: int = 1) -> pd.Series:
+    return _expanding(values, min_periods).max()
+
+
+def expanding_std(values: pd.Series, min_periods: int = 2, ddof: int = 1) -> Any:
+    if isinstance(ddof, bool) or not isinstance(ddof, int) or ddof < 0:
+        raise ValueError(f"ddof must be a non-negative integer, got {ddof!r}")
+    return _expanding(values, min_periods).std(ddof=ddof)
+
+
+# Numeric shaping. All row-wise.
+
+
+def clip(values: Any, lower: Any = None, upper: Any = None) -> Any:
+    if lower is None and upper is None:
+        raise ValueError("clip needs a lower bound, an upper bound, or both")
+    return values.clip(lower=lower, upper=upper)
+
+
+def round_to(values: Any, digits: int = 0) -> Any:
+    if isinstance(digits, bool) or not isinstance(digits, int):
+        raise ValueError(f"digits must be an integer, got {digits!r}")
+    return values.round(digits)
+
+
+def floor(values: Any) -> Any:
+    return np.floor(values)
+
+
+def ceiling(values: Any) -> Any:
+    return np.ceil(values)
+
+
+def power(left: Any, right: Any) -> Any:
+    return left**right
+
+
+def modulo(left: Any, right: Any) -> Any:
+    return left % right
+
+
+def floor_divide(left: Any, right: Any) -> Any:
+    return left // right
+
+
+def sign(values: Any) -> Any:
+    return np.sign(values)
+
+
+def square_root(values: Any) -> Any:
+    return np.sqrt(values)
+
+
+def between(
+    values: pd.Series, lower: Any, upper: Any, inclusive: str = "both"
+) -> pd.Series:
+    if inclusive not in ("both", "neither", "left", "right"):
+        raise ValueError(f"unsupported inclusive mode {inclusive!r}")
+    return values.between(lower, upper, inclusive=inclusive)
+
+
+# Missing data and duplicates. `drop_missing` and `drop_duplicates` change the
+# row count, which their declarations state.
+
+
+def back_fill(values: Any) -> Any:
+    return values.bfill()
+
+
+def drop_missing(values: pd.Series) -> pd.Series:
+    return values.dropna()
+
+
+def interpolate(values: pd.Series, method: str = "linear") -> pd.Series:
+    if method not in ("linear", "nearest", "pad"):
+        raise ValueError(f"unsupported interpolation method {method!r}")
+    return values.interpolate(method=method, limit_direction="forward")
+
+
+def duplicated(values: pd.Series, keep: str = "first") -> pd.Series:
+    if keep not in ("first", "last"):
+        raise ValueError(f"unsupported keep mode {keep!r}")
+    return values.duplicated(keep=keep)
+
+
+def drop_duplicates(values: pd.Series, keep: str = "first") -> pd.Series:
+    if keep not in ("first", "last"):
+        raise ValueError(f"unsupported keep mode {keep!r}")
+    return values.drop_duplicates(keep=keep)
+
+
+def replace_values(values: pd.Series, mapping: Any) -> pd.Series:
+    return values.replace(dict(mapping))
+
+
+# Text. Every one of these is `.str` on a text column.
+
+
+def lower_case(values: pd.Series) -> pd.Series:
+    return values.str.lower()
+
+
+def upper_case(values: pd.Series) -> pd.Series:
+    return values.str.upper()
+
+
+def strip_text(values: pd.Series) -> pd.Series:
+    return values.str.strip()
+
+
+def starts_with(values: pd.Series, prefix: str) -> pd.Series:
+    return values.str.startswith(prefix, na=False)
+
+
+def ends_with(values: pd.Series, suffix: str) -> pd.Series:
+    return values.str.endswith(suffix, na=False)
+
+
+def text_length(values: pd.Series) -> pd.Series:
+    return values.str.len()
+
+
+def text_slice(values: pd.Series, start: int, stop: int) -> pd.Series:
+    return values.str.slice(start, stop)
+
+
+def text_replace(values: pd.Series, old: str, new: str) -> pd.Series:
+    return values.str.replace(old, new, regex=False)
+
+
+def text_concat(left: pd.Series, right: Any) -> pd.Series:
+    return left.str.cat(right, na_rep="")
+
+
+# Calendar fields. `to_datetime` parses; the rest read a parsed column.
+
+
+def to_datetime(values: Any) -> pd.Series:
+    return pd.to_datetime(values)
+
+
+def year(values: pd.Series) -> pd.Series:
+    return values.dt.year
+
+
+def month(values: pd.Series) -> pd.Series:
+    return values.dt.month
+
+
+def day(values: pd.Series) -> pd.Series:
+    return values.dt.day
+
+
+def weekday(values: pd.Series) -> pd.Series:
+    return values.dt.weekday
+
+
+def day_of_year(values: pd.Series) -> pd.Series:
+    return values.dt.dayofyear
+
+
+def date_difference(left: pd.Series, right: pd.Series) -> pd.Series:
+    return (left - right).dt.days
+
+
+# Grouped transforms. Each returns one value per input row, computed within the
+# row's group, so the row axis survives but the value depends on other rows of
+# the same key — which is why these declare an entity axis and an unbounded
+# reach in both directions.
+
+
+def _grouped(values: pd.Series, keys: Any) -> Any:
+    if isinstance(keys, pd.Series):
+        if not values.index.equals(keys.index):
+            raise ValueError("grouped series must have identical labelled indexes")
+        return values.groupby(keys, sort=False)
+    return values.groupby(list(keys), sort=False)
+
+
+def group_sum(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).transform("sum")
+
+
+def group_mean(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).transform("mean")
+
+
+def group_min(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).transform("min")
+
+
+def group_max(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).transform("max")
+
+
+def group_std(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).transform("std")
+
+
+def group_size(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).transform("size")
+
+
+def group_rank(values: pd.Series, keys: Any, ascending: bool = True) -> pd.Series:
+    if not isinstance(ascending, bool):
+        raise ValueError(f"ascending must be a boolean, got {ascending!r}")
+    return _grouped(values, keys).rank(method="average", ascending=ascending)
+
+
+def group_percent_rank(
+    values: pd.Series, keys: Any, ascending: bool = True
+) -> pd.Series:
+    if not isinstance(ascending, bool):
+        raise ValueError(f"ascending must be a boolean, got {ascending!r}")
+    return _grouped(values, keys).rank(pct=True, ascending=ascending)
+
+
+def group_cumulative_sum(values: pd.Series, keys: Any) -> pd.Series:
+    return _grouped(values, keys).cumsum()
+
+
+def group_shift(values: pd.Series, keys: Any, periods: int = 1) -> pd.Series:
+    if isinstance(periods, bool) or not isinstance(periods, int) or periods < 0:
+        raise ValueError(f"periods must be a non-negative integer, got {periods!r}")
+    return _grouped(values, keys).shift(periods)
+
+
+# Reshaping across columns. These build or consume a frame, so they reshape.
+
+
+def to_frame(names: Any, columns: Any) -> pd.DataFrame:
+    names = list(names)
+    columns = list(columns)
+    if len(names) != len(columns):
+        raise ValueError("to_frame needs one name per column")
+    return pd.DataFrame(dict(zip(names, columns)))
+
+
+def column(frame: pd.DataFrame, name: str) -> pd.Series:
+    if name not in frame.columns:
+        raise KeyError(f"no column named {name!r}")
+    return frame[name]
+
+
+def with_column(frame: pd.DataFrame, name: str, values: Any) -> pd.DataFrame:
+    return frame.assign(**{name: values})
+
+
+def select_columns(frame: pd.DataFrame, names: Any) -> pd.DataFrame:
+    names = list(names)
+    missing = [name for name in names if name not in frame.columns]
+    if missing:
+        raise KeyError(f"no column named {missing[0]!r}")
+    return frame[names]
+
+
+def merge_frames(
+    left: pd.DataFrame, right: pd.DataFrame, on: Any, how: str = "left"
+) -> pd.DataFrame:
+    if how not in ("left", "right", "inner", "outer"):
+        raise ValueError(f"unsupported join {how!r}")
+    return left.merge(right, on=list(on), how=how)
+
+
+def concat_rows(frames: Any) -> pd.DataFrame:
+    frames = list(frames)
+    if not frames:
+        raise ValueError("concat_rows needs at least one frame")
+    return pd.concat(frames, axis=0, ignore_index=True)
+
+
+def pivot(frame: pd.DataFrame, index: str, columns: str, values: str) -> pd.DataFrame:
+    return frame.pivot(index=index, columns=columns, values=values)
+
+
+def sort_by(frame: pd.DataFrame, names: Any, ascending: bool = True) -> pd.DataFrame:
+    if not isinstance(ascending, bool):
+        raise ValueError(f"ascending must be a boolean, got {ascending!r}")
+    return frame.sort_values(list(names), ascending=ascending)
+
+
+def group_aggregate(
+    frame: pd.DataFrame, keys: Any, name: str, how: str
+) -> pd.DataFrame:
+    if how not in ("sum", "mean", "min", "max", "std", "count", "median"):
+        raise ValueError(f"unsupported aggregation {how!r}")
+    return frame.groupby(list(keys), sort=False)[name].agg(how).reset_index()
 </pandas-backend>
 
 (extern python pandas-backend
@@ -558,4 +1083,419 @@ def row_min(*values: Any) -> pd.Series:
      "zh-CN" "跨给定序列逐行取最小值。"}
     :osiris/names {"zh-CN" {:preferred 横向最小值}}
     :export true}
-  (逐行 row-min [& ^Any values]))
+  (逐行 row-min [& ^Any values])
+  ^{:doc
+    {:default "Sum of the whole series." "zh-CN" "整列求和。"}
+    :osiris/names {"zh-CN" {:preferred 总和}}
+    :export true}
+  (归约 series-sum [^Any values])
+  ^{:doc
+    {:default "Mean of the whole series." "zh-CN" "整列均值。"}
+    :osiris/names {"zh-CN" {:preferred 总均值}}
+    :export true}
+  (归约 series-mean [^Any values])
+  ^{:doc
+    {:default "Minimum of the whole series." "zh-CN" "整列最小值。"}
+    :osiris/names {"zh-CN" {:preferred 总最小值}}
+    :export true}
+  (归约 series-min [^Any values])
+  ^{:doc
+    {:default "Maximum of the whole series." "zh-CN" "整列最大值。"}
+    :osiris/names {"zh-CN" {:preferred 总最大值}}
+    :export true}
+  (归约 series-max [^Any values])
+  ^{:doc
+    {:default "Median of the whole series." "zh-CN" "整列中位数。"}
+    :osiris/names {"zh-CN" {:preferred 总中位数}}
+    :export true}
+  (归约 series-median [^Any values])
+  ^{:doc
+    {:default "Standard deviation of the whole series."
+     "zh-CN" "整列标准差。"}
+    :osiris/names {"zh-CN" {:preferred 总标准差}}
+    :export true}
+  (归约 series-std [^Any values [^Int ddof = 1]])
+  ^{:doc
+    {:default "Number of non-missing values." "zh-CN" "非缺失值个数。"}
+    :osiris/names {"zh-CN" {:preferred 计数}}
+    :export true}
+  (归约 series-count [^Any values])
+  ^{:doc
+    {:default "Number of distinct values." "zh-CN" "不同取值个数。"}
+    :osiris/names {"zh-CN" {:preferred 去重计数}}
+    :export true}
+  (归约 series-nunique [^Any values])
+  ^{:doc
+    {:default "Quantile of the whole series." "zh-CN" "整列分位数。"}
+    :osiris/names {"zh-CN" {:preferred 分位数}}
+    :export true}
+  (归约 series-quantile
+        [^Any values ^{:type Float :osiris/names {"zh-CN" {:preferred 分位}}} q])
+  ^{:doc
+    {:default "Whether any value is true." "zh-CN" "是否存在为真的值。"}
+    :osiris/names {"zh-CN" {:preferred 任一为真}}
+    :export true}
+  (归约 series-any [^Any values])
+  ^{:doc
+    {:default "Whether every value is true." "zh-CN" "是否全部为真。"}
+    :osiris/names {"zh-CN" {:preferred 全部为真}}
+    :export true}
+  (归约 series-all [^Any values])
+  ^{:doc
+    {:default "Rank within the whole column." "zh-CN" "在整列内求秩。"}
+    :osiris/names {"zh-CN" {:preferred 秩}}
+    :export true}
+  (整列 rank [^Any values [^Str method = "average"] [^Bool ascending = true]])
+  ^{:doc
+    {:default "Rank within the whole column, as a fraction."
+     "zh-CN" "在整列内求百分位秩。"}
+    :osiris/names {"zh-CN" {:preferred 百分位秩}}
+    :export true}
+  (整列 percent-rank [^Any values [^Bool ascending = true]])
+  ^{:doc
+    {:default "Running sum from the first row."
+     "zh-CN" "自首行起的累计和。"}
+    :osiris/names {"zh-CN" {:preferred 累计和}}
+    :export true}
+  (累计 cumulative-sum [^Any values])
+  ^{:doc
+    {:default "Running product from the first row."
+     "zh-CN" "自首行起的累计积。"}
+    :osiris/names {"zh-CN" {:preferred 累计积}}
+    :export true}
+  (累计 cumulative-product [^Any values])
+  ^{:doc
+    {:default "Running maximum from the first row."
+     "zh-CN" "自首行起的累计最大值。"}
+    :osiris/names {"zh-CN" {:preferred 累计最大值}}
+    :export true}
+  (累计 cumulative-max [^Any values])
+  ^{:doc
+    {:default "Running minimum from the first row."
+     "zh-CN" "自首行起的累计最小值。"}
+    :osiris/names {"zh-CN" {:preferred 累计最小值}}
+    :export true}
+  (累计 cumulative-min [^Any values])
+  ^{:doc
+    {:default "Sum over every row so far."
+     "zh-CN" "对目前为止所有行求和。"}
+    :osiris/names {"zh-CN" {:preferred 扩展求和}}
+    :export true}
+  (累计 expanding-sum [^Any values [^Int min-periods = 1]])
+  ^{:doc
+    {:default "Mean over every row so far."
+     "zh-CN" "对目前为止所有行求均值。"}
+    :osiris/names {"zh-CN" {:preferred 扩展均值}}
+    :export true}
+  (累计 expanding-mean [^Any values [^Int min-periods = 1]])
+  ^{:doc
+    {:default "Minimum over every row so far."
+     "zh-CN" "对目前为止所有行取最小值。"}
+    :osiris/names {"zh-CN" {:preferred 扩展最小值}}
+    :export true}
+  (累计 expanding-min [^Any values [^Int min-periods = 1]])
+  ^{:doc
+    {:default "Maximum over every row so far."
+     "zh-CN" "对目前为止所有行取最大值。"}
+    :osiris/names {"zh-CN" {:preferred 扩展最大值}}
+    :export true}
+  (累计 expanding-max [^Any values [^Int min-periods = 1]])
+  ^{:doc
+    {:default "Standard deviation over every row so far."
+     "zh-CN" "对目前为止所有行求标准差。"}
+    :osiris/names {"zh-CN" {:preferred 扩展标准差}}
+    :export true}
+  (累计 expanding-std [^Any values [^Int min-periods = 2] [^Int ddof = 1]])
+  ^{:doc
+    {:default "Bound each value to a range."
+     "zh-CN" "把每个值限制在区间内。"}
+    :osiris/names {"zh-CN" {:preferred 限幅}}
+    :export true}
+  (逐行 clip [^Any values [^Any lower = none] [^Any upper = none]])
+  ^{:doc
+    {:default "Round to the given number of digits."
+     "zh-CN" "按给定位数四舍五入。"}
+    :osiris/names {"zh-CN" {:preferred 取整到}}
+    :export true}
+  (逐行 round-to [^Any values [^Int digits = 0]])
+  ^{:doc
+    {:default "Round down." "zh-CN" "向下取整。"}
+    :osiris/names {"zh-CN" {:preferred 向下取整}}
+    :export true}
+  (逐行 floor [^Any values])
+  ^{:doc
+    {:default "Round up." "zh-CN" "向上取整。"}
+    :osiris/names {"zh-CN" {:preferred 向上取整}}
+    :export true}
+  (逐行 ceiling [^Any values])
+  ^{:doc
+    {:default "Raise to a power elementwise." "zh-CN" "逐项求幂。"}
+    :osiris/names {"zh-CN" {:preferred 幂}}
+    :export true}
+  (逐行 power [^Any left ^Any right])
+  ^{:doc
+    {:default "Remainder elementwise." "zh-CN" "逐项求余。"}
+    :osiris/names {"zh-CN" {:preferred 取余}}
+    :export true}
+  (逐行 modulo [^Any left ^Any right])
+  ^{:doc
+    {:default "Floor division elementwise." "zh-CN" "逐项整除。"}
+    :osiris/names {"zh-CN" {:preferred 整除}}
+    :export true}
+  (逐行 floor-divide [^Any left ^Any right])
+  ^{:doc
+    {:default "Sign of each value." "zh-CN" "逐项取符号。"}
+    :osiris/names {"zh-CN" {:preferred 符号}}
+    :export true}
+  (逐行 sign [^Any values])
+  ^{:doc
+    {:default "Square root of each value." "zh-CN" "逐项取平方根。"}
+    :osiris/names {"zh-CN" {:preferred 平方根}}
+    :export true}
+  (逐行 square-root [^Any values])
+  ^{:doc
+    {:default "Whether each value lies in a range."
+     "zh-CN" "逐行判断是否落在区间内。"}
+    :osiris/names {"zh-CN" {:preferred 介于}}
+    :export true}
+  (逐行 between [^Any values ^Any lower ^Any upper [^Str inclusive = "both"]])
+  ^{:doc
+    {:default "Carry the next observed value backward."
+     "zh-CN" "用后续观测值向后填充。"}
+    :osiris/names {"zh-CN" {:preferred 后向填充}}
+    :export true}
+  (前视 back-fill [^Any values])
+  ^{:doc
+    {:default "Fill gaps between observed values."
+     "zh-CN" "在已观测值之间插值填充。"}
+    :osiris/names {"zh-CN" {:preferred 插值}}
+    :export true}
+  (整列 interpolate [^Any values [^Str method = "linear"]])
+  ^{:doc
+    {:default "Whether each value repeats an earlier or later one."
+     "zh-CN" "逐行判断是否与其他行重复。"}
+    :osiris/names {"zh-CN" {:preferred 是否重复}}
+    :export true}
+  (整列 duplicated [^Any values [^Str keep = "first"]])
+  ^{:doc
+    {:default "Drop rows whose value is missing."
+     "zh-CN" "丢弃取值缺失的行。"}
+    :osiris/names {"zh-CN" {:preferred 去除缺失}}
+    :export true}
+  (变长 drop-missing [^Any values])
+  ^{:doc
+    {:default "Keep one row per distinct value."
+     "zh-CN" "每个不同取值只保留一行。"}
+    :osiris/names {"zh-CN" {:preferred 去重}}
+    :export true}
+  (变长 drop-duplicates [^Any values [^Str keep = "first"]])
+  ^{:doc
+    {:default "Replace values through a mapping."
+     "zh-CN" "按映射替换取值。"}
+    :osiris/names {"zh-CN" {:preferred 替换}}
+    :export true}
+  (逐行 replace-values [^Any values ^Any mapping])
+  ^{:doc
+    {:default "Lower-case each text value." "zh-CN" "逐行转小写。"}
+    :osiris/names {"zh-CN" {:preferred 转小写}}
+    :export true}
+  (逐行 lower-case [^Any values])
+  ^{:doc
+    {:default "Upper-case each text value." "zh-CN" "逐行转大写。"}
+    :osiris/names {"zh-CN" {:preferred 转大写}}
+    :export true}
+  (逐行 upper-case [^Any values])
+  ^{:doc
+    {:default "Trim surrounding whitespace." "zh-CN" "去除首尾空白。"}
+    :osiris/names {"zh-CN" {:preferred 去空白}}
+    :export true}
+  (逐行 strip-text [^Any values])
+  ^{:doc
+    {:default "Whether each text starts with a prefix."
+     "zh-CN" "逐行判断是否以前缀开头。"}
+    :osiris/names {"zh-CN" {:preferred 以此开头}}
+    :export true}
+  (逐行 starts-with [^Any values ^Str prefix])
+  ^{:doc
+    {:default "Whether each text ends with a suffix."
+     "zh-CN" "逐行判断是否以后缀结尾。"}
+    :osiris/names {"zh-CN" {:preferred 以此结尾}}
+    :export true}
+  (逐行 ends-with [^Any values ^Str suffix])
+  ^{:doc
+    {:default "Length of each text value." "zh-CN" "逐行取文本长度。"}
+    :osiris/names {"zh-CN" {:preferred 文本长度}}
+    :export true}
+  (逐行 text-length [^Any values])
+  ^{:doc
+    {:default "Substring of each text value." "zh-CN" "逐行取子串。"}
+    :osiris/names {"zh-CN" {:preferred 文本截取}}
+    :export true}
+  (逐行 text-slice [^Any values ^Int start ^Int stop])
+  ^{:doc
+    {:default "Replace a literal substring."
+     "zh-CN" "逐行替换字面子串。"}
+    :osiris/names {"zh-CN" {:preferred 文本替换}}
+    :export true}
+  (逐行 text-replace [^Any values ^Str old ^Str new])
+  ^{:doc
+    {:default "Join two text columns row by row."
+     "zh-CN" "逐行拼接两列文本。"}
+    :osiris/names {"zh-CN" {:preferred 文本拼接}}
+    :export true}
+  (逐行 text-concat [^Any left ^Any right])
+  ^{:doc
+    {:default "Parse values as timestamps." "zh-CN" "解析为时间戳。"}
+    :osiris/names {"zh-CN" {:preferred 转时间}}
+    :export true}
+  (逐行 to-datetime [^Any values])
+  ^{:doc
+    {:default "Calendar year of each timestamp." "zh-CN" "取年份。"}
+    :osiris/names {"zh-CN" {:preferred 年}}
+    :export true}
+  (逐行 year [^Any values])
+  ^{:doc
+    {:default "Calendar month of each timestamp." "zh-CN" "取月份。"}
+    :osiris/names {"zh-CN" {:preferred 月}}
+    :export true}
+  (逐行 month [^Any values])
+  ^{:doc
+    {:default "Day of month of each timestamp." "zh-CN" "取日。"}
+    :osiris/names {"zh-CN" {:preferred 日}}
+    :export true}
+  (逐行 day [^Any values])
+  ^{:doc
+    {:default "Day of week of each timestamp." "zh-CN" "取星期几。"}
+    :osiris/names {"zh-CN" {:preferred 星期}}
+    :export true}
+  (逐行 weekday [^Any values])
+  ^{:doc
+    {:default "Day of year of each timestamp."
+     "zh-CN" "取一年中的第几天。"}
+    :osiris/names {"zh-CN" {:preferred 年内天数}}
+    :export true}
+  (逐行 day-of-year [^Any values])
+  ^{:doc
+    {:default "Whole days between two timestamp columns."
+     "zh-CN" "两列时间戳相差的整天数。"}
+    :osiris/names {"zh-CN" {:preferred 日期差}}
+    :export true}
+  (逐行 date-difference [^Any left ^Any right])
+  ^{:doc
+    {:default "Sum within each group." "zh-CN" "组内求和。"}
+    :osiris/names {"zh-CN" {:preferred 组内求和}}
+    :export true}
+  (分组
+   group-sum
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Mean within each group." "zh-CN" "组内均值。"}
+    :osiris/names {"zh-CN" {:preferred 组内均值}}
+    :export true}
+  (分组
+   group-mean
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Minimum within each group." "zh-CN" "组内最小值。"}
+    :osiris/names {"zh-CN" {:preferred 组内最小值}}
+    :export true}
+  (分组
+   group-min
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Maximum within each group." "zh-CN" "组内最大值。"}
+    :osiris/names {"zh-CN" {:preferred 组内最大值}}
+    :export true}
+  (分组
+   group-max
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Standard deviation within each group."
+     "zh-CN" "组内标准差。"}
+    :osiris/names {"zh-CN" {:preferred 组内标准差}}
+    :export true}
+  (分组
+   group-std
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Number of rows in each group." "zh-CN" "组内行数。"}
+    :osiris/names {"zh-CN" {:preferred 组内行数}}
+    :export true}
+  (分组
+   group-size
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Rank within each group." "zh-CN" "组内求秩。"}
+    :osiris/names {"zh-CN" {:preferred 组内秩}}
+    :export true}
+  (分组 group-rank [^Any values ^Any keys [^Bool ascending = true]])
+  ^{:doc
+    {:default "Fractional rank within each group."
+     "zh-CN" "组内百分位秩。"}
+    :osiris/names {"zh-CN" {:preferred 组内百分位秩}}
+    :export true}
+  (分组 group-percent-rank [^Any values ^Any keys [^Bool ascending = true]])
+  ^{:doc
+    {:default "Running sum within each group." "zh-CN" "组内累计和。"}
+    :osiris/names {"zh-CN" {:preferred 组内累计和}}
+    :export true}
+  (分组累计
+   group-cumulative-sum
+   [^Any values ^{:type Any :osiris/names {"zh-CN" {:preferred 分组键}}} keys])
+  ^{:doc
+    {:default "Read a value `periods` rows back within the group."
+     "zh-CN" "读取组内回看 periods 行的值。"}
+    :osiris/names {"zh-CN" {:preferred 组内位移}}
+    :export true}
+  (分组累计 group-shift [^Any values ^Any keys [^Int periods = 1]])
+  ^{:doc
+    {:default "Build a frame from named columns."
+     "zh-CN" "由具名列构建数据框。"}
+    :osiris/names {"zh-CN" {:preferred 建表}}
+    :export true}
+  (重塑 to-frame [^Any names ^Any columns])
+  ^{:doc
+    {:default "Read one column out of a frame."
+     "zh-CN" "从数据框取一列。"}
+    :osiris/names {"zh-CN" {:preferred 取列}}
+    :export true}
+  (重塑 column [^Any frame ^Str name])
+  ^{:doc
+    {:default "Add or replace one column." "zh-CN" "新增或替换一列。"}
+    :osiris/names {"zh-CN" {:preferred 加列}}
+    :export true}
+  (重塑 with-column [^Any frame ^Str name ^Any values])
+  ^{:doc
+    {:default "Keep only the named columns." "zh-CN" "只保留指定的列。"}
+    :osiris/names {"zh-CN" {:preferred 选列}}
+    :export true}
+  (重塑 select-columns [^Any frame ^Any names])
+  ^{:doc
+    {:default "Join two frames on shared keys."
+     "zh-CN" "按共同键连接两个数据框。"}
+    :osiris/names {"zh-CN" {:preferred 连接}}
+    :export true}
+  (重塑 merge-frames [^Any left ^Any right ^Any on [^Str how = "left"]])
+  ^{:doc
+    {:default "Stack frames end to end." "zh-CN" "按行拼接多个数据框。"}
+    :osiris/names {"zh-CN" {:preferred 纵向拼接}}
+    :export true}
+  (重塑 concat-rows [^Any frames])
+  ^{:doc
+    {:default "Spread one column into many."
+     "zh-CN" "把一列展开成多列。"}
+    :osiris/names {"zh-CN" {:preferred 透视}}
+    :export true}
+  (重塑 pivot [^Any frame ^Str index ^Str columns ^Str values])
+  ^{:doc
+    {:default "Order rows by the named columns."
+     "zh-CN" "按指定列排序。"}
+    :osiris/names {"zh-CN" {:preferred 排序}}
+    :export true}
+  (重塑 sort-by [^Any frame ^Any names [^Bool ascending = true]])
+  ^{:doc
+    {:default "Reduce each group to one row."
+     "zh-CN" "把每个组归约为一行。"}
+    :osiris/names {"zh-CN" {:preferred 分组汇总}}
+    :export true}
+  (重塑 group-aggregate [^Any frame ^Any keys ^Str name ^Str how]))
