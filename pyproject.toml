@@ -7,10 +7,5 @@ dependencies = ["pandas>=2.0", "numpy>=1.26"]
 
 [build-system]
 build-backend = "osiris_build"
-requires = ["osiris-lang>=0.3,<0.4"]
+requires = ["osiris-lang>=0.3.12,<0.4"]
 
-# 本包需要的三处打包修复尚未随 osiris-lang 发布（PEP 440 post 版本、Linux 上
-# site 根按符号链接重复、后端源未纳入 uv 缓存键），因此暂时用本地检出构建。
-# 新版发布后删掉本表，并把上面的下限提到该版本。
-[tool.uv.sources]
-osiris-lang = { path = "../osiris" }
