@@ -14,10 +14,12 @@ dependencies = ["osiris-pandas"]
 
 ```clojure
 (module app.main)
-(import osiris-pandas.core :refer [窗口均值 横向求和 按条件取值 大于])
+(import osiris-pandas.core :refer [缺失值替换 去空白 转小写 去重计数])
 
-^{:doc "Rolling mean of a series." :export true}
-(defn ^Any 均线 [^Any 序列 ^Int 周期] (窗口均值 序列 周期))
+^{:doc "How many distinct entries a hand-typed text column really has."
+  :export true}
+(defn ^Any 规整后计数 [^Any 文本列]
+  (去重计数 (转小写 (去空白 (缺失值替换 文本列 "")))))
 ```
 
 Every binding declares a call contract — effects, temporal reach, and data
@@ -62,9 +64,23 @@ self-contained while the source remains a real `.py` — readable by your editor
 your type checker, and `python -m unittest tests.test_primitives`, with no build
 step in between.
 
+## Tests
+
+Two layers, each testing what the other cannot:
+
 ```sh
-python -m unittest tests.test_primitives   # tests the backend directly
+python -m unittest tests.test_primitives   # the Python backend, directly
+osr build && pytest dist/tests             # the bindings, from the Osiris side
 ```
+
+The Osiris tests live in `src/tests/pandas_test.osr`, written with
+[osiris-test](https://github.com/mjason/osiris-test)'s `deftest`/`testing`/`is`.
+They compile with the project like any other module and land in `dist/tests/`,
+where pytest collects them by its ordinary naming convention. `[tool.osiris]
+wheel-exclude` in `pyproject.toml` keeps them out of the wheel; the sdist keeps
+them, because it is the buildable form of the project.
+
+## Build
 
 ```sh
 uv build                 # wheel + sdist into dist/

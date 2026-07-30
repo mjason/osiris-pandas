@@ -163,13 +163,23 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "osiris-test" },
     { name = "pandas" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
+    { name = "osiris-test", path = "../osiris-test/dist/osiris_test-0.1.0-py3-none-any.whl" },
     { name = "pandas", specifier = ">=2.0" },
+]
+
+[[package]]
+name = "osiris-test"
+version = "0.1.0"
+source = { path = "../osiris-test/dist/osiris_test-0.1.0-py3-none-any.whl" }
+wheels = [
+    { filename = "osiris_test-0.1.0-py3-none-any.whl", hash = "sha256:f6e6b6d7014dc08cab59ec708f550840562e4c4f6175d340a48a1b0a252dea71" },
 ]
 
 [[package]]

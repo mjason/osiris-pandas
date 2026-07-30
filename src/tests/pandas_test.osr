@@ -1,0 +1,37 @@
+(module tests.pandas_test)
+(import-for-syntax osiris-test.core :refer [deftest testing is])
+(import osiris-test.core :as t)
+(import osiris-pandas.core :refer
+        [建表 取列 总和 缺失值替换 去空白 转小写 去重计数
+         累计和 组内求和 后向填充])
+
+;; 归约绑定返回 ^Any，严格模式下 `=` 不接受 Any 操作数，所以比较走 t/eq?。
+
+^{:doc "Reshaping and reduction agree on a hand-built frame."}
+(deftest 建表与归约
+  (testing "one column, summed"
+    (is (t/eq? 6 (总和 (取列 (建表 ["x"] [[1 2 3]]) "x"))))))
+
+^{:doc "Row-wise cleaning composes left to right."}
+(deftest 逐行清洗
+  (testing "fill, strip, fold case, then count what is distinct"
+    (is (t/eq? 1 (去重计数
+                  (转小写
+                   (去空白
+                    (缺失值替换 (取列 (建表 ["t"] [[" A" "a " "A"]]) "t") "")))))))
+  (testing "filled values enter the sum"
+    (is (t/eq? 4 (总和 (缺失值替换 (取列 (建表 ["x"] [[1 none 3]]) "x") 0))))))
+
+^{:doc "A cumulative reducer reads every earlier row."}
+(deftest 累计
+  (testing "the last cumulative sum equals the plain sum"
+    (let [col (取列 (建表 ["x"] [[1 2 3]]) "x")]
+      (is (t/eq? 10 (总和 (累计和 col)))))))
+
+^{:doc "Grouped and forward-looking shapes stay callable through the bindings."}
+(deftest 分组与后视
+  (testing "group sums broadcast back to rows"
+    (let [frame (建表 ["k" "v"] [["a" "a" "b"] [1 2 10]])]
+      (is (t/eq? 16 (总和 (组内求和 (取列 frame "v") (取列 frame "k")))))))
+  (testing "back-fill declares its future read and still runs"
+    (is (t/eq? 12 (总和 (后向填充 (取列 (建表 ["x"] [[none 3 3 3]]) "x")))))))

@@ -3,10 +3,19 @@ name = "osiris-pandas"
 version = "0.4.0"
 description = "Typed pandas bindings for Osiris, with localized names and declared call contracts."
 requires-python = ">=3.11"
-dependencies = ["pandas>=2.0", "numpy>=1.26"]
+# osiris-test 是测试词汇的提供方。它必须在 dependencies 里而不是 dev 组：
+# 扩展发现只沿 runtime 依赖闭包解析 import-for-syntax。
+dependencies = ["pandas>=2.0", "numpy>=1.26", "osiris-test"]
 
 [build-system]
 build-backend = "osiris_build"
-requires = ["osiris-lang>=0.3.18,<0.4"]
+requires = ["osiris-lang>=0.3.20,<0.4"]
 
+[tool.osiris]
+# 测试模块照常编译、随 sdist 分发，但不进 wheel（OEP-0002-R033I）。
+wheel-exclude = ["tests", "tests.*"]
 
+# osiris-test 发布到 PyPI 后删除本行，改用版本号。
+[tool.uv.sources]
+osiris-test = { path = "../osiris-test/dist/osiris_test-0.1.0-py3-none-any.whl" }
+osiris-lang = { path = "../osiris" }
