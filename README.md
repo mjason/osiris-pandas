@@ -55,9 +55,16 @@ calendar, or a factor vocabulary on top of these.
 
 ## Build
 
-The backend is authored as a `~python` provider inside `src/osiris_pandas/core.osr`
-and relocated into the distribution-private runtime package at build time, so the
-wheel is self-contained.
+The backend is an ordinary Python file, `src/osiris_pandas/backend/primitives.py`,
+named by `py/embed` from `core.osr`. The compiler relocates its content into the
+distribution-private runtime package at build time, so the wheel stays
+self-contained while the source remains a real `.py` — readable by your editor,
+your type checker, and `python -m unittest tests.test_primitives`, with no build
+step in between.
+
+```sh
+python -m unittest tests.test_primitives   # tests the backend directly
+```
 
 ```sh
 uv build                 # wheel + sdist into dist/
