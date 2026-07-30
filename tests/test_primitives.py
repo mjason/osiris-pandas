@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "osiris_pandas" / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "osiris-pandas" / "backend"))
 
 import primitives as be  # noqa: E402
 

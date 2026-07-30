@@ -14,7 +14,7 @@ dependencies = ["osiris-pandas"]
 
 ```clojure
 (module app.main)
-(import osiris_pandas.core :refer [窗口均值 横向求和 按条件取值 大于])
+(import osiris-pandas.core :refer [窗口均值 横向求和 按条件取值 大于])
 
 ^{:doc "Rolling mean of a series." :export true}
 (defn ^Any 均线 [^Any 序列 ^Int 周期] (窗口均值 序列 周期))
@@ -55,7 +55,7 @@ calendar, or a factor vocabulary on top of these.
 
 ## Build
 
-The backend is an ordinary Python file, `src/osiris_pandas/backend/primitives.py`,
+The backend is an ordinary Python file, `src/osiris-pandas/backend/primitives.py`,
 named by `py/embed` from `core.osr`. The compiler relocates its content into the
 distribution-private runtime package at build time, so the wheel stays
 self-contained while the source remains a real `.py` — readable by your editor,

@@ -1,4 +1,4 @@
-(module osiris_pandas.core)
+(module osiris-pandas.core)
 
 ;; 三种契约形状。全部 :availability :immediate——本包不知道任何交易时点或领域时序，
 ;; 只描述数据依赖：逐行操作只看当前行，rolling 看 [t-window+1, t]，位移看 periods 行。
