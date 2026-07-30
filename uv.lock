@@ -157,6 +157,18 @@ wheels = [
 ]
 
 [[package]]
+name = "osiris-lang"
+version = "0.3.21"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/48/0cc09835c5ec9a4861ad801b172875d7954f0fdea5b041d9b2e94bba8ca3/osiris_lang-0.3.21.tar.gz", hash = "sha256:7d2f09f1ae401f02728bb41075aa47adc0f6bd922ead60c6a81f220aa63bba0f", size = 993744, upload-time = "2026-07-30T08:07:52.017Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/30/f19e8269385bcb0004f76080421b3bb76c2044c4800f978ecf12b84f23eb/osiris_lang-0.3.21-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ece440e14b24d1c00d3b0f15f4e844f783b12fcd2a81527bacac43573660f788", size = 7295161, upload-time = "2026-07-30T08:07:44.234Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/a2/17168565131b2f837a90c82f9ddae97c669f100657c75373da3a4b1807cd/osiris_lang-0.3.21-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b5024999f7c43f616c770f55d2b8310fd4f60c12d56c50b55ce620a133c0dc71", size = 7326306, upload-time = "2026-07-30T08:07:46.02Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/7f/9fd6c8eae32f8fefc7161389633fe40dbd1a98b9c0d255007f9bcd4acef7/osiris_lang-0.3.21-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7bb11bbd3f6b94296d4fa69fbf08936cca5203f435f2ec7375ecd3f52d9434eb", size = 7904106, upload-time = "2026-07-30T08:07:48.221Z" },
+    { url = "https://files.pythonhosted.org/packages/45/03/5b427294742029bf434453a4de0695947d67b27439a89c14985d9d2c0986/osiris_lang-0.3.21-py3-none-win_amd64.whl", hash = "sha256:c79e65e2f52d06a059a4b65e38a171fba46d5ad340d85414a8a068fd2e3b7ff2", size = 8148616, upload-time = "2026-07-30T08:07:50.159Z" },
+]
+
+[[package]]
 name = "osiris-pandas"
 version = "0.4.0"
 source = { editable = "." }
@@ -167,19 +179,28 @@ dependencies = [
     { name = "pandas" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "osiris-lang" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
-    { name = "osiris-test", path = "../osiris-test/dist/osiris_test-0.1.0-py3-none-any.whl" },
+    { name = "osiris-test", specifier = ">=0.1.0,<0.2" },
     { name = "pandas", specifier = ">=2.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "osiris-lang", specifier = ">=0.3.21,<0.4" }]
 
 [[package]]
 name = "osiris-test"
 version = "0.1.0"
-source = { path = "../osiris-test/dist/osiris_test-0.1.0-py3-none-any.whl" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/89/8d35b09fe5a6b15bc8f311f869d631091d895476d7f17b1953f62b063212/osiris_test-0.1.0.tar.gz", hash = "sha256:b03d5d0fdb3cc6c00418ded8704e3e874ed6eb20fbe3b39c5e539ee37c2c1176", size = 4154, upload-time = "2026-07-30T07:47:59.971Z" }
 wheels = [
-    { filename = "osiris_test-0.1.0-py3-none-any.whl", hash = "sha256:f6e6b6d7014dc08cab59ec708f550840562e4c4f6175d340a48a1b0a252dea71" },
+    { url = "https://files.pythonhosted.org/packages/6f/6b/99dde44051da0b5190b1d7424e7db6c1a4156da5a878a831cf5bf6df0e43/osiris_test-0.1.0-py3-none-any.whl", hash = "sha256:f6e6b6d7014dc08cab59ec708f550840562e4c4f6175d340a48a1b0a252dea71", size = 9650, upload-time = "2026-07-30T07:47:58.956Z" },
 ]
 
 [[package]]
