@@ -1,6 +1,6 @@
 [project]
 name = "osiris-pandas"
-version = "0.4.0"
+version = "0.4.1"
 description = "Typed pandas bindings for Osiris, with localized names and declared call contracts."
 requires-python = ">=3.11"
 # osiris-test 是测试词汇的提供方。它必须在 dependencies 里而不是 dev 组：
@@ -10,6 +10,12 @@ dependencies = ["pandas>=2.0", "numpy>=1.26", "osiris-test>=0.1.0,<0.2"]
 [build-system]
 build-backend = "osiris_build"
 requires = ["osiris-lang>=0.3.21,<0.4"]
+
+[tool.uv]
+# osiris_build 把 uv.lock 的精确版本写进 wheel 元数据（Requires-Dist）。
+# 下游（xbx-py11 系）钉死 numpy==2.0.2、pandas==2.2.3，锁定版本必须与之
+# 一致才能共存；声明范围（>=1.26 / >=2.0）保持宽松不变。
+constraint-dependencies = ["numpy==2.0.2", "pandas==2.2.3"]
 
 [tool.osiris]
 # 测试模块照常编译、随 sdist 分发，但不进 wheel（OEP-0002-R033I）。
